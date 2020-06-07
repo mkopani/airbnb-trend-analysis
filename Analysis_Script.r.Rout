@@ -1,0 +1,536 @@
+
+R version 3.4.1 (2017-06-30) -- "Single Candle"
+Copyright (C) 2017 The R Foundation for Statistical Computing
+Platform: x86_64-apple-darwin15.6.0 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> #load relevant packages
+> #Make sure all these packages are installed before running this script
+> 
+> library(ggplot2)
+Warning message:
+package ‘ggplot2’ was built under R version 3.4.4 
+> library(forecast)
+Warning messages:
+1: package ‘forecast’ was built under R version 3.4.4 
+2: In as.POSIXlt.POSIXct(Sys.time()) :
+  unknown timezone 'zone/tz/2018i.1.0/zoneinfo/America/Vancouver'
+> library(tseries)
+Warning message:
+package ‘tseries’ was built under R version 3.4.4 
+> library(IDPmisc)
+Warning message:
+package ‘IDPmisc’ was built under R version 3.4.4 
+> library(zoo)
+
+Attaching package: ‘zoo’
+
+The following objects are masked from ‘package:base’:
+
+    as.Date, as.Date.numeric
+
+> library(xts)
+Warning message:
+package ‘xts’ was built under R version 3.4.4 
+> library(lubridate)
+
+Attaching package: ‘lubridate’
+
+The following object is masked from ‘package:base’:
+
+    date
+
+Warning message:
+package ‘lubridate’ was built under R version 3.4.4 
+> library(dplyr)
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:lubridate’:
+
+    intersect, setdiff, union
+
+The following objects are masked from ‘package:xts’:
+
+    first, last
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+Warning message:
+package ‘dplyr’ was built under R version 3.4.4 
+> library(glmnet)
+Loading required package: Matrix
+Loading required package: foreach
+Loaded glmnet 2.0-16
+
+Warning messages:
+1: package ‘glmnet’ was built under R version 3.4.4 
+2: package ‘foreach’ was built under R version 3.4.3 
+> library(lars)
+Loaded lars 1.2
+
+> library(stats)
+> #####################
+> 
+> #load data
+> df <- read.csv('combined_listing.csv',header=TRUE,na.strings=c("","NA"))
+> 
+> #create a new df to explore price and time data
+> n <- nrow(df)
+> price.col <- df[1:n,'price']
+> price.col = as.numeric(gsub("\\$", "", price.col))
+Warning message:
+NAs introduced by coercion 
+> last.review <- as.Date(df[1:n,'last_review'])
+> 
+> #make new dataframe with only price and last review column
+> ts.df <- data.frame(price.col,last.review)
+> 
+> 
+> #order df by date
+> ts.df <- ts.df[order(as.Date(ts.df$last.review, format="%Y-%m-%d")),]
+> 
+> #better col names and clean up df
+> colnames(ts.df) <- c('price','date')
+> ts.df <- NaRV.omit(ts.df)
+> 
+> #get first and last date 
+> start_date <- ts.df$date[1]
+> last_date <- ts.df$date[nrow(ts.df)]
+> 
+> #sequence of dates for date column
+> date <- data.frame(seq(from=start_date,to=last_date,by='days'))
+> colnames(date) <- c('date')
+> 
+> #remove any data from before 2015. Not needed/too little
+> ts.df <- subset(ts.df, ts.df$date> '2015-01-01')
+> 
+> #ts plot of raw prices. May be a little too noisy. Some filtering probably needed
+> plot(as.Date(ts.df$date),ts.df$price, type='l',ylab='price',xlab='Time',col='blue')
+> 
+> 
+> #initial plot too noisy. Group by day
+> meanprice <-  aggregate(ts.df$price,by=list(ts.df$date),mean)
+> colnames(meanprice) <- c('date','meanprice')
+> meanprice <- merge(x = date, y = meanprice, by = 'date', all = TRUE)
+> meanprice$date <- as.Date(meanprice$date)
+> 
+> #remove data from before 2015. Too little of it
+> meanprice <- na.omit(meanprice[meanprice[['date']] > as.Date('2015-01-01') ,])
+> meanprice <- data.frame(meanprice)
+> meanprice$meanprice <-meanprice$meanprice
+> 
+> #plot with aggregated data. ggplot because its prettier.
+> p3<- ggplot(meanprice,aes(date,meanprice)) + geom_line() +ylab('Daily Average Price') + xlab('Time')
+> print(p3)
+> 
+> 
+> #After consulting Harry Joe, he suggested it might make sense to aggregate data by week and see if there are trends. 
+> #group by week
+> daily_xts <- as.xts(meanprice$meanprice,order.by=as.Date(meanprice$date))
+> weekly_ts <- apply.weekly(daily_xts,mean)
+> 
+> 
+> #plot weekly time series
+> print(plot.xts(weekly_ts,main='Time series of average weekly price'))
+> 
+> #decompose time series
+> weekly <- ts(as.numeric(weekly_ts), frequency=52)
+> weekly_components <- decompose(weekly)
+> 
+> #plot decomposistion
+> plot(weekly_components)
+> 
+> #Holt-Winter exponential smoothing
+> exposmoothing_forecasts <- HoltWinters(weekly,seasonal = 'additive')
+> plot(exposmoothing_forecasts)
+> 
+> #testing stationarity
+> adf.test(weekly,alternative = "stationary")
+
+	Augmented Dickey-Fuller Test
+
+data:  weekly
+Dickey-Fuller = -3.9549, Lag order = 5, p-value = 0.01255
+alternative hypothesis: stationary
+
+> 
+> #Variogram defintion: 
+> #G(k) = Var(vt+k - vt)/Var(zt+1 - zt)
+> Var <- var(diff(weekly,lag=1))
+> Gk <- vector(mode='numeric',length=48)
+> for (k in 1:48){
++   Gk[k] <- var(diff(weekly,lag=k))/Var
++ }
+> 
+> plot(1:48,Gk,ylab='Gk',xlab='Lag',type='l')
+> 
+> #deseason
+> deseasoned <- weekly - weekly_components$seasonal
+> plot(deseasoned)
+> 
+> #deaseasoned stil has a trend. Need to difference
+> diff_ds <- diff(deseasoned,differences = 1)
+> adf.test(diff_ds,alternative = 'stationary')
+
+	Augmented Dickey-Fuller Test
+
+data:  diff_ds
+Dickey-Fuller = -8.7495, Lag order = 5, p-value = 0.01
+alternative hypothesis: stationary
+
+Warning message:
+In adf.test(diff_ds, alternative = "stationary") :
+  p-value smaller than printed p-value
+> plot(diff_ds,type='l',main='Time series differenced by 1',ylab='Differenced price')
+> 
+> acf(as.numeric(diff_ds))
+> pacf(as.numeric(diff_ds))
+> 
+> #fit some different arimas
+> fit <- arima(weekly,order=c(3,1,2),seasonal = list(order=c(1,0,0),period=52),method='CSS')
+> fit2 <- arima(weekly,order=c(2,1,2),seasonal = list(order=c(1,0,0),period=52),method='CSS')
+> fit3 <- arima(weekly,order=c(3,1,4),seasonal = list(order=c(1,1,0),period=52),method='CSS')
+> fit4 <- arima(weekly,order=c(0,1,2),seasonal = list(order=c(1,1,0),period=52),method='CSS')
+> 
+> #summary of fit
+> summary(fit);summary(fit2);summary(fit3);summary(fit4)
+
+Call:
+arima(x = weekly, order = c(3, 1, 2), seasonal = list(order = c(1, 0, 0), period = 52), 
+    method = "CSS")
+
+Coefficients:
+          ar1      ar2      ar3      ma1      ma2    sar1
+      -0.5051  -0.3590  -0.1701  -0.0824  -0.0430  0.1854
+s.e.   0.4638   0.1803   0.1256   0.4646   0.2675  0.0550
+
+sigma^2 estimated as 155.5:  part log likelihood = -792.39
+
+Training set error measures:
+                    ME     RMSE      MAE        MPE     MAPE      MASE
+Training set 0.3367462 10.60113 6.855652 -0.2377252 5.190019 0.4641541
+                      ACF1
+Training set -0.0006825646
+
+Call:
+arima(x = weekly, order = c(2, 1, 2), seasonal = list(order = c(1, 0, 0), period = 52), 
+    method = "CSS")
+
+Coefficients:
+         ar1      ar2      ma1     ma2    sar1
+      0.1383  -0.2443  -0.7263  0.2056  0.1883
+s.e.  0.3438   0.1141   0.3411  0.2495  0.0520
+
+sigma^2 estimated as 155:  part log likelihood = -792.07
+
+Training set error measures:
+                    ME    RMSE     MAE        MPE     MAPE      MASE
+Training set 0.3525411 10.6203 6.89393 -0.2235079 5.226123 0.4667457
+                     ACF1
+Training set -0.003863886
+
+Call:
+arima(x = weekly, order = c(3, 1, 4), seasonal = list(order = c(1, 1, 0), period = 52), 
+    method = "CSS")
+
+Coefficients:
+          ar1      ar2      ar3      ma1     ma2     ma3      ma4     sar1
+      -0.6031  -0.9917  -0.3676  -0.1754  0.5797  -0.758  -0.3853  -0.2406
+s.e.      NaN      NaN      NaN      NaN     NaN     NaN   0.0381      NaN
+
+sigma^2 estimated as 124.1:  part log likelihood = -570.6
+
+Training set error measures:
+                    ME     RMSE      MAE       MPE     MAPE      MASE
+Training set 0.9877496 7.599924 4.002705 0.6163827 2.922693 0.2709986
+                    ACF1
+Training set -0.04672417
+Warning message:
+In sqrt(diag(x$var.coef)) : NaNs produced
+
+Call:
+arima(x = weekly, order = c(0, 1, 2), seasonal = list(order = c(1, 1, 0), period = 52), 
+    method = "CSS")
+
+Coefficients:
+          ma1      ma2     sar1
+      -0.8817  -0.0457  -0.1898
+s.e.   0.0831   0.0805   0.0468
+
+sigma^2 estimated as 157.3:  part log likelihood = -588.27
+
+Training set error measures:
+                   ME     RMSE      MAE       MPE     MAPE     MASE       ACF1
+Training set 0.968455 8.691992 4.475639 0.5307543 3.280966 0.303018 -0.0125795
+> 
+> #diagnostic plots
+> tsdisplay(residuals(fit), main='(3,1,2)(1,0,0) Model Residuals',lag.max = 20)
+> tsdisplay(residuals(fit2), main='(2,1,2)(1,0,0) Model Residuals',lag.max=20)
+> tsdisplay(residuals(fit3), main='(3,1,4)(1,1,0) Model Residuals',lag.max=20)
+> tsdisplay(residuals(fit4), main='(0,1,2)(1,1,0) Model Residuals',lag.max=20)
+> 
+> #create a test set and training set
+> test <- window(as.numeric(weekly), start=183)
+> train <-window(as.numeric(weekly[1:182]))
+> train <- ts(train,frequency = 52)
+> 
+> #train models on subset of data
+> train_fit3 <- arima(train,order=c(0,1,2),seasonal = list(order=c(1,0,1),period=52),method='CSS')
+> train_fit4 <- arima(train,order=c(0,1,2),seasonal = list(order=c(1,1,0),period=52),method='CSS')
+> train_fit5 <- arima(train,order=c(0,1,1),seasonal = list(order=c(1,1,1),period=52),method='CSS')
+> train_fit6 <- arima(train,order=c(2,1,2),seasonal = list(order=c(1,0,1),period=52),method='CSS')
+> train_fit7 <- arima(train,order=c(2,1,1),seasonal = list(order=c(1,0,1),period=52),method='CSS')
+> holtWint <- HoltWinters(train,seasonal = 'additive')
+Warning message:
+In HoltWinters(train, seasonal = "additive") :
+  optimization difficulties: ERROR: ABNORMAL_TERMINATION_IN_LNSRCH
+> 
+> 
+> #get forecats for holdout set
+> fcast_train3 <- forecast(train_fit3,h=20)
+> fcast_train4 <- forecast(train_fit4,h=20)
+> fcast_train5 <- forecast(train_fit5,h=20)
+> fcast_train6 <- forecast(train_fit6,h=20)
+> fcast_train7 <- forecast(train_fit7,h=20)
+> hwint_fcast <- forecast(holtWint,h=20)
+> 
+> par(mfrow=c(3,2))
+> #plot forecast and holdout data
+> plot(fcast_train3)
+> lines(weekly,col='red')
+> 
+> 
+> plot(fcast_train4)
+> lines(weekly,col='red')
+> 
+> plot(fcast_train5)
+> lines(weekly,col='red')
+> 
+> plot(fcast_train6)
+> lines(weekly,col='red')
+> 
+> plot(hwint_fcast)
+> lines(weekly,col='red')
+> 
+> plot(fcast_train7)
+> lines(weekly,col='red')
+> 
+> accuracy(fcast_train3,test);accuracy(fcast_train4,test);
+                    ME     RMSE      MAE        MPE     MAPE      MASE
+Training set 0.2042022 10.63877 6.866619 -0.4024495 5.369915 0.4483052
+Test set     3.2069871 10.58724 8.625640  1.6163236 5.454843 0.5631475
+                     ACF1 Theil's U
+Training set -0.001039466        NA
+Test set      0.083160946 0.8804024
+                     ME      RMSE       MAE        MPE     MAPE      MASE
+Training set  0.8983795  7.731367  3.795974  0.4666572 2.887001 0.2478301
+Test set     -2.0819837 14.647929 10.469241 -1.3780790 6.688597 0.6835118
+                    ACF1 Theil's U
+Training set -0.01364295        NA
+Test set      0.11860605  1.230631
+> accuracy(fcast_train5,test);accuracy(fcast_train6,test);
+                    ME      RMSE       MAE      MPE     MAPE      MASE
+Training set 0.8391605  7.414594  3.693963 0.426026 2.815895 0.2411700
+Test set     2.1694849 13.490008 10.046880 1.423354 6.498787 0.6559368
+                    ACF1 Theil's U
+Training set 0.009771298        NA
+Test set     0.159074180  1.159702
+                   ME     RMSE      MAE        MPE     MAPE      MASE
+Training set 0.495416 10.42612 6.596456 -0.1211989 5.114894 0.4306669
+Test set     2.601856 10.38445 8.410879  1.2273414 5.342311 0.5491262
+                     ACF1 Theil's U
+Training set -0.005004414        NA
+Test set      0.069825876 0.8656783
+> accuracy(fcast_train7,test);accuracy(hwint_fcast,test)
+                    ME     RMSE      MAE        MPE     MAPE      MASE
+Training set 0.5061379 10.42751 6.615646 -0.1161672 5.131491 0.4319197
+Test set     2.7955078 10.45066 8.471474  1.3522866 5.372979 0.5530823
+                     ACF1 Theil's U
+Training set -0.003454429        NA
+Test set      0.071939169 0.8706445
+                     ME     RMSE      MAE        MPE     MAPE      MASE
+Training set  1.2602761 12.11623 8.606847  0.4744059 6.650153 0.5619205
+Test set     -0.3118626 13.26653 9.387543 -0.2084820 6.031749 0.6128903
+                   ACF1 Theil's U
+Training set 0.02627935        NA
+Test set     0.10472485  1.125607
+> 
+> 
+> ########### Feature Selection ###########
+> 
+> df$price = as.numeric(df$price)
+> drops = c("weekly_price", "square_feet", "monthly_price", "is_business_travel_ready")
+> df = df[, !(names(df) %in% drops)]
+> 
+> data.complete = df[complete.cases(df),]
+> data.complete$price = as.numeric(data.complete$price)
+> data.complete1 = data.matrix(data.complete)
+> 
+> str(data.complete)
+'data.frame':	0 obs. of  93 variables:
+ $ X                               : int 
+ $ access                          : Factor w/ 12914 levels "     A private gym and sauna for your pleasure and convenience",..: 
+ $ accommodates                    : int 
+ $ amenities                       : Factor w/ 50254 levels "{\"Air conditioning\",\"Free parking on premises\",\"Indoor fireplace\",Heating,\"Family/kid friendly\",\"Suita"| __truncated__,..: 
+ $ availability_30                 : int 
+ $ availability_365                : int 
+ $ availability_60                 : int 
+ $ availability_90                 : int 
+ $ bathrooms                       : num 
+ $ bed_type                        : Factor w/ 5 levels "Airbed","Couch",..: 
+ $ bedrooms                        : num 
+ $ beds                            : num 
+ $ calculated_host_listings_count  : int 
+ $ calendar_last_scraped           : Factor w/ 46 levels "2015-11-07","2015-12-03",..: 
+ $ calendar_updated                : Factor w/ 68 levels "1 week ago","10 months ago",..: 
+ $ cancellation_policy             : Factor w/ 6 levels "flexible","moderate",..: 
+ $ city                            : Factor w/ 24 levels " Vancouver","BC",..: 
+ $ cleaning_fee                    : Factor w/ 350 levels "$0.00","$1,000.00",..: 
+ $ country                         : Factor w/ 2 levels "Canada","United States": 
+ $ country_code                    : Factor w/ 3 levels "Ca","CA","US": 
+ $ description                     : Factor w/ 37324 levels "                  What you get in the condo!       Your own room ( Ikea twin that pulls to a full queen - real "| __truncated__,..: 
+ $ experiences_offered             : Factor w/ 1 level "none": 
+ $ extra_people                    : Factor w/ 216 levels "$0.00","$10.00",..: 
+ $ first_review                    : Factor w/ 2116 levels "2009-04-02","2009-04-19",..: 
+ $ guests_included                 : int 
+ $ has_availability                : Factor w/ 1 level "t": 
+ $ host_about                      : Factor w/ 10057 levels "️","\n","\n\n",..: 
+ $ host_acceptance_rate            : Factor w/ 95 levels "0%","10%","100%",..: 
+ $ host_has_profile_pic            : Factor w/ 2 levels "f","t": 
+ $ host_id                         : int 
+ $ host_identity_verified          : Factor w/ 2 levels "f","t": 
+ $ host_is_superhost               : Factor w/ 2 levels "f","t": 
+ $ host_listings_count             : num 
+ $ host_location                   : Factor w/ 460 levels "108 Mile Ranch, British Columbia, Canada",..: 
+ $ host_name                       : Factor w/ 5566 levels "(Email hidden by Airbnb)",..: 
+ $ host_neighbourhood              : Factor w/ 111 levels "Anaheim","Arbutus Ridge",..: 
+ $ host_picture_url                : Factor w/ 23574 levels "https://a0.muscache.com/ac/users/10022488/profile_pic/1384557705/original.jpg?interpolation=lanczos-none&crop=w"| __truncated__,..: 
+ $ host_response_rate              : Factor w/ 91 levels "0%","10%","100%",..: 
+ $ host_response_time              : Factor w/ 4 levels "a few days or more",..: 
+ $ host_since                      : Factor w/ 2853 levels "2009-01-05","2009-02-22",..: 
+ $ host_thumbnail_url              : Factor w/ 23574 levels "https://a0.muscache.com/ac/users/10022488/profile_pic/1384557705/original.jpg?interpolation=lanczos-none&crop=w"| __truncated__,..: 
+ $ host_total_listings_count       : num 
+ $ host_url                        : Factor w/ 12941 levels "https://www.airbnb.com/users/show/10002327",..: 
+ $ host_verifications              : Factor w/ 478 levels "['email', 'facebook', 'google', 'reviews', 'jumio']",..: 
+ $ house_rules                     : Factor w/ 15181 levels " - Check时间:一般入住时间是下午3点以后,而在后期检查是可以接受的。 Check退房时间:退房时间为上午11:00,关键必须返"| __truncated__,..: 
+ $ id                              : int 
+ $ instant_bookable                : Factor w/ 2 levels "f","t": 
+ $ interaction                     : Factor w/ 10939 levels "  I will be able to help Guests if they had any require of Vancouver city",..: 
+ $ is_location_exact               : Factor w/ 2 levels "f","t": 
+ $ jurisdiction_names              : Factor w/ 6 levels "{\"British Columbia\",\" Canada\",\" Burnaby\",\" British Columbia\",\" Canada\"}",..: 
+ $ last_review                     : Factor w/ 1508 levels "2010-02-25","2011-07-04",..: 
+ $ last_scraped                    : Factor w/ 43 levels "2015-11-07","2015-12-03",..: 
+ $ latitude                        : num 
+ $ license                         : Factor w/ 2956 levels " 18-581447"," 18-615304 ",..: 
+ $ listing_url                     : Factor w/ 20299 levels "https://www.airbnb.com/rooms/10000341",..: 
+ $ longitude                       : num 
+ $ market                          : Factor w/ 11 levels "Beijing","Los Angeles",..: 
+ $ maximum_nights                  : int 
+ $ medium_url                      : Factor w/ 24429 levels "https://a0.muscache.com/im/pictures/00025eea-eb47-4175-8827-ef578799a7fc.jpg?aki_policy=medium",..: 
+ $ minimum_nights                  : int 
+ $ name                            : Factor w/ 27656 levels "  Trout  Lake  Haven  ",..: 
+ $ neighborhood_overview           : Factor w/ 12997 levels " 5 min to the English Bay beach",..: 
+ $ neighbourhood                   : Factor w/ 32 levels "Arbutus Ridge",..: 
+ $ neighbourhood_cleansed          : Factor w/ 23 levels "Arbutus Ridge",..: 
+ $ neighbourhood_group_cleansed    : logi 
+ $ notes                           : Factor w/ 11490 levels "  If you have any special questions about the apartment, the area, the city or otherwise we are happy to provid"| __truncated__,..: 
+ $ number_of_reviews               : int 
+ $ picture_url                     : Factor w/ 35987 levels "https://a0.muscache.com/4ea/air/v2//pictures/310e5599-bad2-4965-8e72-f3d6aca3277d.jpg?t=r:w1200-h720-sfit,e:fjpg-c85",..: 
+ $ price                           : num 
+ $ property_type                   : Factor w/ 40 levels "Aparthotel","Apartment",..: 
+ $ require_guest_phone_verification: Factor w/ 2 levels "f","t": 
+ $ require_guest_profile_picture   : Factor w/ 2 levels "f","t": 
+ $ requires_license                : Factor w/ 2 levels "f","t": 
+ $ review_scores_accuracy          : num 
+ $ review_scores_checkin           : num 
+ $ review_scores_cleanliness       : num 
+ $ review_scores_communication     : num 
+ $ review_scores_location          : num 
+ $ review_scores_rating            : num 
+ $ review_scores_value             : num 
+ $ reviews_per_month               : num 
+ $ room_type                       : Factor w/ 3 levels "Entire home/apt",..: 
+ $ scrape_id                       : num 
+ $ security_deposit                : Factor w/ 968 levels "$0.00","$1,000.00",..: 
+ $ smart_location                  : Factor w/ 26 levels " Vancouver, Canada",..: 
+ $ space                           : Factor w/ 20798 levels "                  What you get in the condo!       Your own room ( Ikea twin that pulls to a full queen - real "| __truncated__,..: 
+ $ state                           : Factor w/ 16 levels "B.c.","B.C.",..: 
+ $ street                          : Factor w/ 10056 levels " Vancouver, BC, Canada",..: 
+ $ summary                         : Factor w/ 29711 levels "             Amazing Location, 1 Bedroom, Parking, Full Apartment in the heart of downtown 2 blocks from the be"| __truncated__,..: 
+ $ thumbnail_url                   : Factor w/ 28160 levels "https://a0.muscache.com/ac/pictures/100062842/d5922853_original.jpg?interpolation=lanczos-none&size=small&outpu"| __truncated__,..: 
+ $ transit                         : Factor w/ 13367 levels " 3 minutes walk to Bus Stop / public transit ",..: 
+ $ xl_picture_url                  : Factor w/ 28536 levels "https://a0.muscache.com/ac/pictures/100062842/d5922853_original.jpg?interpolation=lanczos-none&size=x_large_cov"| __truncated__,..: 
+ $ zipcode                         : Factor w/ 5765 levels ".","• V5T 0E3",..: 
+> 
+> factorvars = colnames(data.complete[,sapply(data.complete, is.factor)])
+> factorvars
+ [1] "access"                           "amenities"                       
+ [3] "bed_type"                         "calendar_last_scraped"           
+ [5] "calendar_updated"                 "cancellation_policy"             
+ [7] "city"                             "cleaning_fee"                    
+ [9] "country"                          "country_code"                    
+[11] "description"                      "experiences_offered"             
+[13] "extra_people"                     "first_review"                    
+[15] "has_availability"                 "host_about"                      
+[17] "host_acceptance_rate"             "host_has_profile_pic"            
+[19] "host_identity_verified"           "host_is_superhost"               
+[21] "host_location"                    "host_name"                       
+[23] "host_neighbourhood"               "host_picture_url"                
+[25] "host_response_rate"               "host_response_time"              
+[27] "host_since"                       "host_thumbnail_url"              
+[29] "host_url"                         "host_verifications"              
+[31] "house_rules"                      "instant_bookable"                
+[33] "interaction"                      "is_location_exact"               
+[35] "jurisdiction_names"               "last_review"                     
+[37] "last_scraped"                     "license"                         
+[39] "listing_url"                      "market"                          
+[41] "medium_url"                       "name"                            
+[43] "neighborhood_overview"            "neighbourhood"                   
+[45] "neighbourhood_cleansed"           "notes"                           
+[47] "picture_url"                      "property_type"                   
+[49] "require_guest_phone_verification" "require_guest_profile_picture"   
+[51] "requires_license"                 "room_type"                       
+[53] "security_deposit"                 "smart_location"                  
+[55] "space"                            "state"                           
+[57] "street"                           "summary"                         
+[59] "thumbnail_url"                    "transit"                         
+[61] "xl_picture_url"                   "zipcode"                         
+> 
+> 
+> #LASSO for feature selection since orginal dataframe had 96 explanatory variables
+> 
+> removevars = c(factorvars, "price", "latitude", "longitude")
+> 
+> y <- as.vector(data.complete$price)
+> x = data.complete[, !(names(data.complete) %in% removevars)]
+> # x = data.frame(matrix(unlist(x), nrow = nrow(x), byrow = T))
+> # x = as.data.frame(x)
+> xm = as.matrix(x)
+> # alpha = 1 - LASSO
+> lambdas <- exp( seq(-3, 10, length=50))
+> a <- glmnet(x=xm, y=y, lambda=rev(lambdas), 
++             family='gaussian', alpha=1, intercept=TRUE)
+Error in elnet(x, is.sparse, ix, jx, y, weights, offset, type.gaussian,  : 
+  y is constant; gaussian glmnet fails at standardization step
+Calls: glmnet -> elnet
+Execution halted
